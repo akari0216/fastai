@@ -28,6 +28,17 @@ mk_class('event', **_events.map_dict(),
 _inner_loop = "before_batch after_pred after_loss before_backward before_step after_step after_cancel_batch after_batch".split()
 
 # Cell
+_ex_docs = dict(
+    CancelBatchException="Skip the rest of this batch and go to `after_batch`",
+    CancelTrainException="Skip the rest of the training part of the epoch and go to `after_train`",
+    CancelValidException="Skip the rest of the validation part of the epoch and go to `after_validate`",
+    CancelEpochException="Skip the rest of this epoch and go to `after_epoch`",
+    CancelStepException ="Skip stepping the optimizer",
+    CancelFitException  ="Interrupts training and go to `after_fit`")
+
+for c,d in _ex_docs.items(): mk_class(c,sup=Exception,doc=d)
+
+# Cell
 @funcs_kwargs(as_method=True)
 class Callback(Stateful,GetAttr):
     "Basic class handling tweaks of the training loop by changing a `Learner` in various events"
@@ -42,7 +53,12 @@ class Callback(Stateful,GetAttr):
         _run = (event_name not in _inner_loop or (self.run_train and getattr(self, 'training', True)) or
                (self.run_valid and not getattr(self, 'training', False)))
         res = None
-        if self.run and _run: res = getattr(self, event_name, noop)()
+        if self.run and _run:
+            try: res = getattr(self, event_name, noop)()
+            except (CancelBatchException, CancelEpochException, CancelFitException, CancelStepException, CancelTrainException, CancelValidException): raise
+            except Exception as e:
+                e.args = [f'Exception occured in `{self.__class__.__name__}` when calling event `{event_name}`:\n\t{e.args[0]}']
+                raise
         if event_name=='after_fit': self.run=True #Reset self.run to True at each end of fit
         return res
 
@@ -91,23 +107,12 @@ class TrainEvalCallback(Callback):
 if not hasattr(defaults, 'callbacks'): defaults.callbacks = [TrainEvalCallback]
 
 # Cell
-_ex_docs = dict(
-    CancelBatchException="Skip the rest of this batch and go to `after_batch`",
-    CancelTrainException="Skip the rest of the training part of the epoch and go to `after_train`",
-    CancelValidException="Skip the rest of the validation part of the epoch and go to `after_validate`",
-    CancelEpochException="Skip the rest of this epoch and go to `after_epoch`",
-    CancelStepException ="Skip stepping the optimizer",
-    CancelFitException  ="Interrupts training and go to `after_fit`")
-
-for c,d in _ex_docs.items(): mk_class(c,sup=Exception,doc=d)
-
-# Cell
-#TODO: save_targs and save_preds only handle preds/targets that have one tensor, not tuples of tensors.
 class GatherPredsCallback(Callback):
-    "`Callback` that saves the predictions and targets, optionally `with_loss`"
+    "`Callback` that returns all predictions and targets, optionally `with_input` or `with_loss`"
     _stateattrs=('preds','targets','inputs','losses')
-    def __init__(self, with_input=False, with_loss=False, save_preds=None, save_targs=None, concat_dim=0):
-        store_attr("with_input,with_loss,save_preds,save_targs,concat_dim")
+    def __init__(self, with_input=False, with_loss=False, save_preds=None, save_targs=None,
+                 with_preds=True, with_targs=True, concat_dim=0, pickle_protocol=2):
+        store_attr()
 
     def before_batch(self):
         if self.with_input: self.inputs.append((self.learn.to_detach(self.xb)))
@@ -122,10 +127,12 @@ class GatherPredsCallback(Callback):
         "Save predictions, targets and potentially losses"
         if not hasattr(self, 'pred'): return
         preds,targs = self.learn.to_detach(self.pred),self.learn.to_detach(self.yb)
-        if self.save_preds is None: self.preds.append(preds)
-        else: (self.save_preds/str(self.iter)).save_array(preds)
-        if self.save_targs is None: self.targets.append(targs)
-        else: (self.save_targs/str(self.iter)).save_array(targs[0])
+        if self.with_preds: self.preds.append(preds)
+        if self.with_targs: self.targets.append(targs)
+        if self.save_preds is not None:
+            torch.save(preds, self.save_preds/str(self.iter), pickle_protocol=self.pickle_protocol)
+        if self.save_targs is not None:
+            torch.save(targs[0], self.save_targs/str(self.iter), pickle_protocol=self.pickle_protocol)
         if self.with_loss:
             bs = find_bs(self.yb)
             loss = self.loss if self.loss.numel() == bs else self.loss.view(bs,-1).mean(1)
@@ -134,13 +141,13 @@ class GatherPredsCallback(Callback):
     def after_validate(self):
         "Concatenate all recorded tensors"
         if not hasattr(self, 'preds'): return
-        if self.with_input:     self.inputs  = detuplify(to_concat(self.inputs, dim=self.concat_dim))
-        if not self.save_preds: self.preds   = detuplify(to_concat(self.preds, dim=self.concat_dim))
-        if not self.save_targs: self.targets = detuplify(to_concat(self.targets, dim=self.concat_dim))
-        if self.with_loss:      self.losses  = to_concat(self.losses)
+        if self.with_input: self.inputs  = detuplify(to_concat(self.inputs, dim=self.concat_dim))
+        if self.with_preds: self.preds   = detuplify(to_concat(self.preds, dim=self.concat_dim))
+        if self.with_targs: self.targets = detuplify(to_concat(self.targets, dim=self.concat_dim))
+        if self.with_loss:  self.losses  = to_concat(self.losses)
 
     def all_tensors(self):
-        res = [None if self.save_preds else self.preds, None if self.save_targs else self.targets]
+        res = [self.preds if self.with_preds else None, self.targets if self.with_targs else None]
         if self.with_input: res = [self.inputs] + res
         if self.with_loss:  res.append(self.losses)
         return res

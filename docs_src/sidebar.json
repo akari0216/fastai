@@ -27,12 +27,14 @@
             "Advanced": {
                 "Albumentations Tutorial": "/tutorial.albumentations.html",
                 "Siamese Tutorial": "/tutorial.siamese.html",
+                "Image Sequences/Video Tutorial": "/tutorial.image_sequence.html",
                 "Performance Tips and Tricks": "/dev/performance.html"
             }
         },
         "empty3": {
             "Migrating from Other Libraries": {
                 "Plain PyTorch": "/migrating_pytorch.html",
+                "Plain PyTorch (Verbose)": "/migrating_pytorch_verbose.html",
                 "Ignite": "/migrating_ignite.html",
                 "Lightning": "/migrating_lightning.html",
                 "Catalyst": "/migrating_catalyst.html"
@@ -116,7 +118,8 @@
         "Captum": "/callback.captum.html",
         "Weights & Biases": "/callback.wandb.html",
         "Neptune": "/callback.neptune.html",
-        "TensorBoard": "/callback.tensorboard.html"
+        "TensorBoard": "/callback.tensorboard.html",
+        "Azure ML": "/callback.azureml.html"
     },
     "fastai Development": {
         "Developers Guide": "/dev-setup.html",
